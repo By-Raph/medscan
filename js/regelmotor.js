@@ -43,7 +43,56 @@
     return { regelId: regel.id, naam: regel.naam, ernst: ernst, tekst: tekst, advies: regel.advies, bron: regel.bron, itemIds: itemIds };
   }
 
+  // "850 mg" -> 850, "1 g" -> 1000, anders null
+  function mgVan(sterkte) {
+    var m = /([\d.,]+)\s*(mg|g|microg|µg)\b/i.exec(sterkte || "");
+    if (!m) return null;
+    var v = parseFloat(m[1].replace(",", "."));
+    var e = m[2].toLowerCase();
+    return e === "g" ? v * 1000 : (e === "microg" || e === "µg") ? v / 1000 : v;
+  }
+  // dosisBasis "zout": sterkte van het zout (bv. metformine-HCl), zoals in de dosisrichtlijnen
+  function sterkteVoor(stof, basis) { return basis === "zout" ? (stof.sterkteZout || stof.sterkte) : stof.sterkte; }
+  function dagdosisMg(item, stof, basis) {
+    if (item.zoNodig || item.nietDagelijks) return null;
+    var mg = mgVan(sterkteVoor(stof, basis)), sch = item.schema || {};
+    var n = (sch.o || 0) + (sch.m || 0) + (sch.a || 0) + (sch.s || 0);
+    return mg == null || !n ? null : mg * n;
+  }
+  // Eén voorwaarde: alle opgegeven criteria moeten kloppen
+  function voldoet(v, ctx, item, stof, basis) {
+    if (v.egfrOnder != null && !(ctx.egfr != null && ctx.egfr < v.egfrOnder)) return false;
+    if (v.leeftijdVanaf != null && !(ctx.leeftijd != null && ctx.leeftijd >= v.leeftijdVanaf)) return false;
+    if (v.sterkteVanafMg != null) { var mg = mgVan(sterkteVoor(stof, basis)); if (mg == null || mg < v.sterkteVanafMg) return false; }
+    if (v.dagdosisBovenMg != null) { var dd = dagdosisMg(item, stof, basis); if (dd == null || dd <= v.dagdosisBovenMg) return false; }
+    return true;
+  }
+  function vulIn(t, ctx, item, stof, basis) {
+    return (t || "").replace(/\{egfr\}/g, ctx.egfr).replace(/\{leeftijd\}/g, ctx.leeftijd)
+      .replace(/\{stof\}/g, stof.naam).replace(/\{product\}/g, item.product.naam)
+      .replace(/\{dagdosis\}/g, Math.round(dagdosisMg(item, stof, basis) * 10) / 10);
+  }
+
   var handlers = {
+    // Eén middel + context (eGFR, leeftijd, sterkte, dagdosis). Eerste voorwaarde die klopt, telt.
+    context: function (regel, items, ctx) {
+      var uit = [];
+      items.forEach(function (item) {
+        if (!telt(item)) return;
+        var stof = (item.product.stoffen || []).find(function (s) { return matcht(s.atc, regel.atc); });
+        if (!stof) return;
+        for (var i = 0; i < regel.voorwaarden.length; i++) {
+          var v = regel.voorwaarden[i];
+          if (!voldoet(v, ctx, item, stof, regel.dosisBasis)) continue;
+          var w = maak(regel, v.ernst, vulIn(v.tekst, ctx, item, stof, regel.dosisBasis), [item.id]);
+          w.advies = vulIn(v.advies || regel.advies, ctx, item, stof, regel.dosisBasis);
+          uit.push(w);
+          break;
+        }
+      });
+      return uit;
+    },
+
     telling: function (regel, items, ctx) {
       var stoffen = vindStoffen(items, regel.atc);
       if (stoffen.length < regel.drempel) return [];
@@ -137,7 +186,7 @@
     return uit;
   }
 
-  var api = { evalueer: evalueer, matcht: matcht };
+  var api = { evalueer: evalueer, matcht: matcht, mgVan: mgVan };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Regelmotor = api;
 })(typeof window !== "undefined" ? window : this);

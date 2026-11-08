@@ -87,7 +87,7 @@
       naam: p[0], atc: p[1], vergund: p[3] === 1, cnk: p[4], samIndex: i, bron: "SAM",
       stoffen: p[2].map(function (x) {
         var st = SAM.stoffen[x[0]];
-        return { naam: st[0], atc: st[1] || p[1] || null, sterkte: x[1] || "" };
+        return { naam: st[0], atc: st[1] || p[1] || null, sterkte: x[1] || "", sterkteZout: x[2] || "" };
       })
     };
   }

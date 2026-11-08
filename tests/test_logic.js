@@ -50,4 +50,18 @@ if (SAM) {
   const jm=sp(zoekNaam(/^Janumet 50 mg - 850/)); assert.deepEqual(jm.stoffen.map(s=>s.atc).sort(),['A10BA02','A10BH01']);
   console.log('SAM OK:', SAM.versie, Object.keys(SAM.gtin).length, 'GTIN');
 }
+// Nierfunctie-regels: testschema Raphael (70 j, eGFR 29)
+if (SAM) {
+  const sp2=i=>{const p=SAM.producten[i]; return {naam:p[0], stoffen:p[2].map(x=>({naam:SAM.stoffen[x[0]][0], atc:SAM.stoffen[x[0]][1]||p[1], sterkte:x[1], sterkteZout:x[2]||''}))};};
+  const zn=re=>SAM.producten.findIndex(p=>re.test(p[0])&&p[3]===1);
+  const items2=[it(sp2(SAM.gtin['05000456017282'])), it(sp2(zn(/^Suvezen 10 mg - 10 mg/)),{schema:{o:2,m:0,a:0,s:0}}), it(sp2(zn(/^Brufen Forte 600/)),{schema:{o:1,m:1,a:1,s:0}})];
+  let w2=RM.evalueer(items2,{leeftijd:70,egfr:29},R);
+  console.log(w2.map(x=>x.ernst+' | '+x.naam+' | '+x.tekst));
+  assert.equal(w2.filter(x=>x.ernst==='hoog').length,2,'Brufen + rosuvastatine hoog');
+  w2=RM.evalueer(items2,{leeftijd:70,egfr:55},R); assert.ok(w2.find(x=>x.regelId==='nier-nsaid'&&x.ernst==='matig'));
+  w2=RM.evalueer(items2,{leeftijd:70},R); assert.ok(w2.find(x=>x.regelId==='nier-nsaid'&&/70-jarige/.test(x.tekst)));
+  const met=it(sp2(zn(/^Metformine Viatris 850 mg/)),{schema:{o:1,m:0,a:1,s:0}});
+  w2=RM.evalueer([met],{egfr:40},R); assert.ok(w2[0].ernst==='hoog' && /1700 mg/.test(w2[0].tekst), JSON.stringify(w2));
+  assert.equal(RM.mgVan('1 g'),1000);
+}
 console.log('ALLE TESTS OK; stoffen:',Object.keys(DB.STOFFEN).length,'merken:',DB.MERKEN.length);
