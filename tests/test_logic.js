@@ -37,4 +37,17 @@ items=[it(prod('Ledertrexate','methotrexaat'))]; assert.equal(RM.evalueer(items,
 items[0].nietDagelijks='wekelijks'; assert.equal(RM.evalueer(items,{},R).length,0);
 // vervallen
 items=[it(prod('Dafalgan','paracetamol'),{vervallen:true,vervaldatum:'2024-01-31'})]; assert.equal(RM.evalueer(items,{},R)[0].regelId,'vervallen');
+// SAM-databank (indien aanwezig)
+try { require(path+'data/sam.js'); } catch(e) {}
+const SAM=window.MEDSCAN_SAM;
+if (SAM) {
+  const sp=i=>{const p=SAM.producten[i]; return {naam:p[0], stoffen:p[2].map(x=>({naam:SAM.stoffen[x[0]][0], atc:SAM.stoffen[x[0]][1]||p[1]}))};};
+  const fx=SAM.gtin['05000456017282']; assert.ok(fx!=null,'Forxiga-GTIN in SAM'); assert.match(sp(fx).naam,/Forxiga 10 mg/);
+  const zoekNaam=re=>SAM.producten.findIndex(p=>re.test(p[0])&&p[3]===1);
+  const cd=sp(zoekNaam(/^Co-Diovane 80/)); assert.deepEqual(cd.stoffen.map(s=>s.atc).sort(),['C03AA03','C09CA03']);
+  const br=sp(zoekNaam(/^Brufen 400/));
+  let w=RM.evalueer([it(cd),it(br)],{},R); assert.ok(w.find(x=>x.regelId==='triple-whammy'),'triple whammy met SAM-combinatie');
+  const jm=sp(zoekNaam(/^Janumet 50 mg - 850/)); assert.deepEqual(jm.stoffen.map(s=>s.atc).sort(),['A10BA02','A10BH01']);
+  console.log('SAM OK:', SAM.versie, Object.keys(SAM.gtin).length, 'GTIN');
+}
 console.log('ALLE TESTS OK; stoffen:',Object.keys(DB.STOFFEN).length,'merken:',DB.MERKEN.length);

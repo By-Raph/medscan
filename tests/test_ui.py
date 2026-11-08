@@ -75,15 +75,15 @@ async def main():
         echt=os.path.join(W,'echt_dot_datamatrix_zilver_op_zwart.jpg')
         if os.path.exists(echt):
             await page.set_input_files('#foto-galerij', echt); await page.wait_for_selector('#bezig', state='hidden', timeout=60000); await page.wait_for_timeout(200)
-            ok = await page.is_visible('#s-zoek') and '05000456017282' in await page.inner_text('#koppel-info')
-            print('ECHTE FOTO (dot-DataMatrix):', 'gelezen' if ok else 'NIET gelezen: '+await page.inner_text('#scan-melding'))
+            ok = await page.is_visible('#s-dosering') and 'Forxiga' in await page.inner_text('#dos-naam')
+            print('ECHTE FOTO (dot-DataMatrix):', ('gelezen + herkend via SAM: '+await page.inner_text('#dos-naam')+' | '+await page.inner_text('#dos-stoffen')) if ok else 'NIET gelezen: '+await page.inner_text('#scan-melding'))
             if not CSP: assert ok
-            if ok: await page.click('#btn-zoek-terug')
+            if ok: await page.screenshot(path=OUT+'/ui_5_sam.png'); await page.click('#btn-dos-annuleer')
         live = await page.evaluate('Lezer.liveMogelijk()')
         print('live mogelijk:', live)
         if Y4M and live and not CSP:
-            await page.click('#btn-scan'); await page.wait_for_selector('#s-zoek', state='visible', timeout=20000)
-            assert '05000456017282' in await page.inner_text('#koppel-info'); print('LIVE SCAN OK')
+            await page.click('#btn-scan'); await page.wait_for_selector('#s-dosering', state='visible', timeout=20000)
+            assert 'Forxiga' in await page.inner_text('#dos-naam'); print('LIVE SCAN OK (Forxiga via SAM)')
         print('\n'.join(l for l in logs if 'error' in l.lower() or 'PAGEERROR' in l))
         print('motor:', await page.evaluate('Lezer.motor()')); print('UI TEST OK', 'CSP' if CSP else 'normaal')
         await b.close()

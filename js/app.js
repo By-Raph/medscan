@@ -6,7 +6,7 @@
 (function () {
   "use strict";
 
-  var DB = window.MEDSCAN_DB, REGELS = window.MEDSCAN_REGELS;
+  var DB = window.MEDSCAN_DB, REGELS = window.MEDSCAN_REGELS, SAM = window.MEDSCAN_SAM || null;
   var $ = function (id) { return document.getElementById(id); };
   var MOMENTEN = [["o", "Ochtend"], ["m", "Middag"], ["a", "Avond"], ["s", "Slapen"]];
 
@@ -75,20 +75,44 @@
   var laatsteModus = "";
   function statusBalk(modus) {
     if (modus) laatsteModus = modus;
-    $("status").textContent = (laatsteModus ? laatsteModus + " · " : "") + Opslag.aantal() + " barcodes gekend";
-    $("tabel-info").textContent = "Barcodetabel: " + Opslag.aantal() + " gekend";
+    $("status").textContent = (SAM ? "SAM " + Object.keys(SAM.gtin).length + " GTIN · " : "") + Opslag.aantal() + " eigen koppelingen";
+    $("tabel-info").textContent = "Eigen barcodekoppelingen: " + Opslag.aantal();
   }
 
-  // ---------- Zoeken in de databank ----------
+  // ---------- Geneesmiddelendatabank: SAM (indien aanwezig) + startlijst stoffen ----------
+  // Product uit SAM: stoffen krijgen hun eigen ATC; ontbreekt die, dan de ATC van het product.
+  function samProduct(i) {
+    var p = SAM.producten[i];
+    return {
+      naam: p[0], atc: p[1], vergund: p[3] === 1, cnk: p[4], samIndex: i, bron: "SAM",
+      stoffen: p[2].map(function (x) {
+        var st = SAM.stoffen[x[0]];
+        return { naam: st[0], atc: st[1] || p[1] || null, sterkte: x[1] || "" };
+      })
+    };
+  }
+  function samZoekGtin(gtin) {
+    if (!SAM || !gtin) return null;
+    var i = SAM.gtin[gtin];
+    return i == null ? null : samProduct(i);
+  }
+
   var zoekIndex = (function () {
     var lijst = [];
     Object.keys(DB.STOFFEN).forEach(function (stof) {
-      lijst.push({ naam: stof, soort: "stof", stoffen: [{ naam: stof, atc: DB.STOFFEN[stof] }], sleutel: norm(stof) });
+      lijst.push({ naam: stof.charAt(0).toUpperCase() + stof.slice(1), soort: "stof", stoffen: [{ naam: stof, atc: DB.STOFFEN[stof] }], sleutel: norm(stof), vergund: true });
     });
-    DB.MERKEN.forEach(function (m) {
-      var st = m[1].map(function (s) { return { naam: s, atc: DB.STOFFEN[s] || null }; });
-      lijst.push({ naam: m[0], soort: "merk", stoffen: st, sleutel: norm(m[0] + " " + m[1].join(" ")) });
-    });
+    if (SAM) {
+      SAM.producten.forEach(function (p, i) {
+        lijst.push({ soort: "sam", i: i, naam: p[0], vergund: p[3] === 1, sleutel: norm(p[0]),
+          stofTekst: p[2].map(function (x) { return SAM.stoffen[x[0]][0]; }).join(" + "), atc: p[1] });
+      });
+    } else {
+      DB.MERKEN.forEach(function (m) {
+        var st = m[1].map(function (s) { return { naam: s, atc: DB.STOFFEN[s] || null }; });
+        lijst.push({ naam: m[0], soort: "merk", stoffen: st, sleutel: norm(m[0] + " " + m[1].join(" ")), vergund: true });
+      });
+    }
     return lijst;
   })();
 
@@ -100,13 +124,17 @@
       return woorden.every(function (w) { return x.sleutel.indexOf(w) !== -1; });
     });
     res.sort(function (a, b) {
-      var sa = norm(a.naam).indexOf(t) === 0 ? 0 : 1, sb = norm(b.naam).indexOf(t) === 0 ? 0 : 1;
-      return sa - sb || a.naam.localeCompare(b.naam);
+      var sa = a.sleutel.indexOf(t) === 0 ? 0 : 1, sb = b.sleutel.indexOf(t) === 0 ? 0 : 1;
+      return sa - sb || (a.vergund === b.vergund ? 0 : a.vergund ? -1 : 1) ||
+        (a.soort === "stof" ? -1 : 0) - (b.soort === "stof" ? -1 : 0) || a.naam.localeCompare(b.naam);
     });
-    return res.slice(0, 25);
+    return res.slice(0, 40);
   }
 
-  function productUit(x) { return { naam: x.soort === "merk" ? x.naam : x.naam.charAt(0).toUpperCase() + x.naam.slice(1), stoffen: x.stoffen }; }
+  function productUit(x) {
+    if (x.soort === "sam") return samProduct(x.i);
+    return { naam: x.naam, stoffen: x.stoffen };
+  }
 
   // ---------- Barcode lezen (zie js/lezer.js) ----------
   function kiesBeste(resultaten) {
@@ -215,9 +243,13 @@
       toast(bestaand.product.naam + " stond al in de lijst (" + bestaand.aantalDoosjes + " doosjes)");
       return;
     }
-    var product = Opslag.zoekCode(info.code);
+    // 1) eigen koppeling (ook als correctie op SAM), 2) SAM via GTIN, 3) manueel koppelen
+    var product = Opslag.zoekCode(info.code), herkend = "tabel";
+    if (!product) { product = samZoekGtin(info.gtin); herkend = "sam"; }
     if (product) {
-      openDosering(nieuwItem(product, "barcode", info), true);
+      var it = nieuwItem(product, "barcode", info);
+      it.herkend = herkend;
+      openDosering(it, true);
     } else {
       koppelCode = info;
       openZoeken(info);
@@ -263,9 +295,11 @@
     ul.innerHTML = "";
     res.forEach(function (x) {
       var li = document.createElement("li");
-      li.innerHTML = '<div class="naam">' + esc(x.soort === "merk" ? x.naam : x.naam) + "</div>" +
-        '<div class="sub">' + (x.soort === "merk" ? esc(x.stoffen.map(function (s) { return s.naam; }).join(" + ")) + " · " : "stof · ") +
-        esc(x.stoffen.map(function (s) { return s.atc; }).join(", ")) + "</div>";
+      var sub;
+      if (x.soort === "sam") sub = esc(x.stofTekst) + " · " + esc(x.atc || "") + (x.vergund ? "" : " · <i>niet meer vergund</i>");
+      else if (x.soort === "merk") sub = esc(x.stoffen.map(function (s) { return s.naam; }).join(" + ")) + " · " + esc(x.stoffen.map(function (s) { return s.atc; }).join(", "));
+      else sub = "werkzame stof (algemeen) · " + esc(x.stoffen[0].atc);
+      li.innerHTML = '<div class="naam">' + esc(x.naam) + "</div>" + '<div class="sub">' + sub + "</div>";
       li.onclick = function () { kiesProduct(productUit(x)); };
       ul.appendChild(li);
     });
@@ -299,15 +333,16 @@
       ? item.product.stoffen.map(function (s) { return s.naam + (s.atc ? " (" + s.atc + ")" : ""); }).join(" + ")
       : "geen ATC gekend";
     var b = [];
-    if (item.bron === "barcode") b.push('<span class="badge">via barcode</span>');
+    if (item.bron === "barcode") b.push('<span class="badge">' + (item.herkend === "sam" ? "herkend via SAM" : "via barcode") + "</span>");
     else b.push('<span class="badge grijs">manueel</span>');
     if (item.vervaldatum) b.push('<span class="badge ' + (item.vervallen ? "rood" : "grijs") + '">' + (item.vervallen ? "VERVALLEN " : "vervalt ") + datumNL(item.vervaldatum) + "</span>");
     if (item.aantalDoosjes > 1) b.push('<span class="badge grijs">' + item.aantalDoosjes + " doosjes</span>");
-    if (item.code && item.bron === "barcode") b.push('<button class="badge grijs" id="btn-ontkoppel" style="border:0">koppeling fout?</button>');
+    if (item.product.vergund === false) b.push('<span class="badge oranje">niet meer vergund</span>');
+    if (item.code && item.bron === "barcode") b.push('<button class="badge grijs" id="btn-ontkoppel" style="border:0">fout product?</button>');
     $("dos-badges").innerHTML = b.join("");
     var ontk = $("btn-ontkoppel");
     if (ontk) ontk.onclick = async function () {
-      var ok = await dialoog("De koppeling van deze barcode met <b>" + esc(item.product.naam) + "</b> vergeten? Bij de volgende scan kies je het product opnieuw.", { ja: "Vergeet koppeling" });
+      var ok = await dialoog("Is <b>" + esc(item.product.naam) + "</b> niet het juiste product? Kies het juiste; de app onthoudt jouw keuze voor deze barcode (ook als SAM iets anders zegt).", { ja: "Kies ander product" });
       if (!ok) return;
       await Opslag.vergeetKoppeling(item.code);
       statusBalk();
@@ -316,6 +351,7 @@
       openZoeken(koppelCode);
     };
     $("dos-sterkte").value = item.sterkte || "";
+    $("dos-sterkte").placeholder = item.product.bron === "SAM" ? "optioneel (sterkte staat al in de naam)" : "bv. 5 mg tablet";
     renderStappers();
     $("dos-zonodig").checked = item.zoNodig;
     $("dos-frequentie").value = item.nietDagelijks || "";
@@ -470,6 +506,9 @@
       duurSec: Math.round((Date.now() - sessie.start) / 1000),
       aantalMiddelen: items.length,
       viaBarcode: items.filter(function (i) { return i.bron === "barcode"; }).length,
+      herkendViaSam: items.filter(function (i) { return i.herkend === "sam"; }).length,
+      herkendViaTabel: items.filter(function (i) { return i.herkend === "tabel"; }).length,
+      samVersie: SAM ? SAM.versie : null,
       manueel: items.filter(function (i) { return i.bron === "manueel"; }).length,
       scanPogingen: sessie.pogingen || 0,
       scanMislukt: sessie.mislukt || 0,
@@ -555,6 +594,9 @@
     isLive = ok;
     if (ok) { $("scan-uitleg").textContent = "live: richt de camera op de code"; $("lbl-foto").textContent = "Foto"; }
   });
+
+  // Bronvermelding SAM (licentievoorwaarde)
+  if (SAM) $("sam-bron").innerHTML = "Geneesmiddelengegevens: <b>" + esc(SAM.bron) + "</b>. Dit hergebruik heeft geen officieel karakter en werd niet goedgekeurd door de beheerders van SAM.";
 
   // ---------- Start ----------
   statusBalk("laden");
