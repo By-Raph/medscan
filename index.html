@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f3d3e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Medscan">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<title>Medscan PoC</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="kop">
+  <div class="kop-titel">Medscan <span class="tag">PoC</span></div>
+  <div class="kop-status" id="status">laden…</div>
+</header>
+
+<main>
+  <!-- ===== Scherm 0: sessie starten ===== -->
+  <section class="scherm" id="s-start">
+    <h1>Nieuwe sessie</h1>
+    <p class="uitleg">Optionele context voor de waarschuwingen. Alles mag leeg blijven.</p>
+    <div class="velden">
+      <label>Leeftijd <input type="number" inputmode="numeric" id="ctx-leeftijd" min="0" max="120" placeholder="jaar"></label>
+      <label>eGFR <input type="number" inputmode="numeric" id="ctx-egfr" min="0" max="150" placeholder="ml/min/1,73m²"></label>
+      <label>Kalium <input type="number" inputmode="decimal" id="ctx-kalium" min="1" max="9" step="0.1" placeholder="mmol/l"></label>
+    </div>
+    <button class="knop primair groot" id="btn-start">Start scannen</button>
+    <div class="tabelbeheer">
+      <span id="tabel-info">Barcodetabel</span>
+      <button class="knop klein" id="btn-export">Exporteer</button>
+      <button class="knop klein" id="btn-import">Importeer</button>
+    </div>
+    <p class="voetnoot">Geef geen naam of andere patiëntgegevens in. Het schema blijft enkel in dit venster en verdwijnt wanneer je de sessie afsluit.</p>
+  </section>
+
+  <!-- ===== Scherm 1: scannen ===== -->
+  <section class="scherm" id="s-scan" hidden>
+    <input type="file" accept="image/*" capture="environment" id="foto-camera" hidden>
+    <button class="knop primair groot scanknop" id="btn-scan">
+      Scan verpakking
+      <small id="scan-uitleg">foto van dichtbij: DataMatrix of streepjescode groot in beeld</small>
+    </button>
+    <div class="knoprij">
+      <label class="knop"><input type="file" accept="image/*" id="foto-galerij" hidden><span id="lbl-foto">Kies foto</span></label>
+      <button class="knop" id="btn-zoek">Zoek op naam</button>
+      <button class="knop" id="btn-code">Code typen</button>
+    </div>
+    <div class="melding" id="scan-melding" hidden></div>
+    <h2 class="lijsttitel">Medicatie <span id="teller">(0)</span></h2>
+    <ul class="lijst" id="lijst"></ul>
+    <div class="onderbalk">
+      <button class="knop primair" id="btn-afronden" disabled>Afronden →</button>
+    </div>
+  </section>
+
+  <!-- ===== Scherm 2: zoeken / koppelen ===== -->
+  <section class="scherm" id="s-zoek" hidden>
+    <div class="koppel-info" id="koppel-info" hidden></div>
+    <h1 id="zoek-titel">Zoek op naam</h1>
+    <input type="search" id="zoek-invoer" class="zoekveld" placeholder="Merknaam of werkzame stof…" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <ul class="resultaten" id="zoek-resultaten"></ul>
+    <div class="knoprij">
+      <button class="knop" id="btn-zoek-terug">← Terug</button>
+    </div>
+  </section>
+
+  <!-- ===== Scherm 3: dosering ===== -->
+  <section class="scherm" id="s-dosering" hidden>
+    <div class="product-kop">
+      <h1 id="dos-naam"></h1>
+      <div class="stoffen" id="dos-stoffen"></div>
+      <div class="badges" id="dos-badges"></div>
+    </div>
+    <label class="vrij">Sterkte / vorm <input type="text" id="dos-sterkte" placeholder="bv. 5 mg tablet" autocomplete="off"></label>
+
+    <div class="schema" id="dos-schema">
+      <!-- stappers worden door app.js ingevuld -->
+    </div>
+
+    <div class="opties">
+      <label class="schakel"><input type="checkbox" id="dos-zonodig"> Zo nodig</label>
+      <label class="kies">Niet dagelijks
+        <select id="dos-frequentie">
+          <option value="">— dagelijks —</option>
+          <option value="wekelijks">wekelijks</option>
+          <option value="maandelijks">maandelijks</option>
+          <option value="andere">andere</option>
+        </select>
+      </label>
+      <input type="text" id="dos-frequentie-tekst" placeholder="bv. maandag, of om de 2 dagen" hidden>
+    </div>
+
+    <div class="segment-groep">
+      <div class="segment-label">Neemt de patiënt het effectief?</div>
+      <div class="segment" id="dos-inname">
+        <button data-w="ja">Ja</button><button data-w="nee">Nee</button><button data-w="onduidelijk">Onduidelijk</button>
+      </div>
+    </div>
+    <div class="segment-groep">
+      <div class="segment-label">Staat in het dossier? <small>(voor de meting, optioneel)</small></div>
+      <div class="segment" id="dos-dossier">
+        <button data-w="ja">Ja</button><button data-w="nee">Nee</button><button data-w="">–</button>
+      </div>
+    </div>
+
+    <div class="onderbalk">
+      <button class="knop gevaar" id="btn-dos-verwijder" hidden>Verwijder</button>
+      <button class="knop" id="btn-dos-annuleer">Annuleer</button>
+      <button class="knop primair" id="btn-dos-opslaan">Opslaan</button>
+    </div>
+  </section>
+
+  <!-- ===== Scherm 4: overzicht ===== -->
+  <section class="scherm" id="s-overzicht" hidden>
+    <h1>Overzicht</h1>
+    <div class="context" id="ov-context"></div>
+    <table class="tabel">
+      <thead><tr><th>Middel</th><th title="ochtend-middag-avond-slapengaan">O-M-A-S</th><th>Neemt</th></tr></thead>
+      <tbody id="ov-tabel"></tbody>
+    </table>
+    <h2>Waarschuwingen <span id="ov-aantal"></span></h2>
+    <p class="voetnoot">Regels v0: voorstel, nog niet klinisch gevalideerd.</p>
+    <ul class="waarschuwingen" id="ov-waarschuwingen"></ul>
+    <h2>Schema als tekst</h2>
+    <textarea id="ov-tekst" readonly rows="8"></textarea>
+    <div class="knoprij">
+      <button class="knop" id="btn-kopieer">Kopieer tekst</button>
+      <button class="knop" id="btn-ov-terug">← Verder scannen</button>
+    </div>
+    <div class="onderbalk">
+      <button class="knop primair" id="btn-afsluiten">Sessie afsluiten</button>
+    </div>
+  </section>
+</main>
+
+<!-- Live scanner -->
+<div class="live" id="live" hidden>
+  <video id="live-video" playsinline muted autoplay></video>
+  <div class="live-kader"></div>
+  <div class="live-tekst" id="live-tekst">Richt op de DataMatrix of streepjescode</div>
+  <div class="live-knoppen">
+    <button class="knop" id="btn-live-sluit">Sluiten</button>
+    <button class="knop" id="btn-live-foto">Foto</button>
+    <button class="knop" id="btn-live-zoek">Zoek op naam</button>
+  </div>
+</div>
+
+<!-- Eigen dialoogvenster (alert/confirm/prompt werken niet in een artifact) -->
+<div class="dialoog-achtergrond" id="dialoog" hidden>
+  <div class="dialoog">
+    <div id="dialoog-tekst"></div>
+    <input type="text" id="dialoog-invoer" hidden autocomplete="off">
+    <div class="knoprij rechts">
+      <button class="knop" id="dialoog-nee">Annuleer</button>
+      <button class="knop primair" id="dialoog-ja">OK</button>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast" hidden></div>
+<div class="bezig" id="bezig" hidden><div class="spinner"></div><div id="bezig-tekst">Barcode lezen…</div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/zxing-wasm@3.1.6/dist/iife/reader/index.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+<script src="data/geneesmiddelen.js"></script>
+<script src="data/regels.js"></script>
+<script src="js/gs1.js"></script>
+<script src="js/regelmotor.js"></script>
+<script src="js/opslag.js"></script>
+<script src="js/lezer.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

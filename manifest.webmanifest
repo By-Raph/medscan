@@ -1,0 +1,16 @@
+{
+  "name": "Medscan PoC",
+  "short_name": "Medscan",
+  "description": "Medicatie scannen op huisbezoek (proof of concept, masterproef huisartsopleiding)",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f6f8f7",
+  "theme_color": "#0f3d3e",
+  "lang": "nl",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
