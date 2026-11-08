@@ -18,6 +18,8 @@ async def main():
         async def cdn(route):
             u=route.request.url
             if '@zxing/library' in u: await route.fulfill(path=ZJS, content_type='application/javascript')
+            elif '/jspdf@' in u: await route.fulfill(path=os.environ.get('JSPDF','node_modules/jspdf/dist/jspdf.umd.min.js'), content_type='application/javascript')
+            elif '/jspdf-autotable@' in u: await route.fulfill(path=os.environ.get('JSPDF_AT','node_modules/jspdf-autotable/dist/jspdf.plugin.autotable.min.js'), content_type='application/javascript')
             elif u.endswith('index.js'): await route.fulfill(path=NM+'/iife/reader/index.js', content_type='application/javascript')
             elif u.endswith('.wasm'): await route.fulfill(path=NM+'/reader/zxing_reader.wasm', content_type='application/wasm')
             else: await route.abort()
@@ -64,6 +66,10 @@ async def main():
         print('WAARSCHUWINGEN', ws)
         print(await page.input_value('#ov-tekst'))
         await page.click('#ov-waarschuwingen li >> nth=0 >> .duimen button >> nth=0')
+        async with page.expect_download() as dl:
+            await page.click('#btn-pdf')
+        pdfpad=os.path.join(OUT,'test_medicatieschema.pdf'); await (await dl.value).save_as(pdfpad)
+        print('PDF OK', os.path.getsize(pdfpad), 'bytes')
         await page.click('#btn-afsluiten'); await page.click('#dialoog-ja'); await page.wait_for_timeout(300)
         print('LOG', await page.evaluate('localStorage.getItem("medscan.log.v1")'))
         print('TABEL', await page.evaluate('Object.keys(JSON.parse(localStorage.getItem("medscan.gtin.v1")))'))

@@ -475,6 +475,8 @@
 
     $("ov-tekst").value = maakTekst();
     toon("s-overzicht");
+    // PDF-bibliotheken alvast laden, zodat de PDF-knop meteen werkt (iOS: delen moet snel na de tik gebeuren)
+    pdfLibs().catch(function () { /* later opnieuw proberen */ });
   }
 
   function maakTekst() {
@@ -494,6 +496,137 @@
       huidigeWaarschuwingen.forEach(function (w) { regels.push("- [" + w.ernst + "] " + w.naam + ": " + w.tekst); });
     }
     return regels.join("\n");
+  }
+
+  // ---------- PDF (lokaal gemaakt met jsPDF, enkel geladen wanneer nodig) ----------
+  var PDF_LIBS = [
+    "https://cdn.jsdelivr.net/npm/jspdf@4.2.1/dist/jspdf.umd.min.js",
+    "https://cdn.jsdelivr.net/npm/jspdf-autotable@5.0.9/dist/jspdf.plugin.autotable.min.js"
+  ];
+  function laadScript(url) {
+    return new Promise(function (ok, nok) {
+      var sc = document.createElement("script"); sc.src = url;
+      sc.onload = ok; sc.onerror = function () { nok(new Error("Kon " + url + " niet laden (geen internet?)")); };
+      document.head.appendChild(sc);
+    });
+  }
+  async function pdfLibs() {
+    if (!(window.jspdf && window.jspdf.jsPDF)) await laadScript(PDF_LIBS[0]);
+    if (!window.autoTable && !(window.jspdf.jsPDF.API && window.jspdf.jsPDF.API.autoTable)) await laadScript(PDF_LIBS[1]);
+  }
+  // Standaard PDF-lettertypes kennen enkel Latin-1: rest vervangen
+  function pdfTekst(t) {
+    return String(t == null ? "" : t).replace(/⁺/g, "+").replace(/[–—]/g, "-").replace(/[→]/g, "->")
+      .replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[^\x00-\xff]/g, "");
+  }
+  function opmerking(it) {
+    var o = [];
+    if (it.zoNodig) o.push("zo nodig");
+    if (it.nietDagelijks) o.push(it.nietDagelijks === "andere" ? (it.nietDagelijksTekst || "niet dagelijks") : it.nietDagelijks);
+    if (it.inname === "nee") o.push("NEEMT NIET");
+    if (it.inname === "onduidelijk") o.push("inname onduidelijk");
+    if (it.vervallen) o.push("VERVALLEN " + datumNL(it.vervaldatum));
+    if (it.inDossier === "nee") o.push("niet in dossier");
+    return o.join(", ");
+  }
+
+  async function maakPdf() {
+    bezig(true, "PDF maken…");
+    try {
+      await pdfLibs();
+      var doc = new window.jspdf.jsPDF({ unit: "mm", format: "a4" });
+      var autoTable = window.autoTable || function (d, o) { return d.autoTable(o); };
+      var nu = new Date(), p2 = function (n) { return (n < 10 ? "0" : "") + n; };
+      var datum = p2(nu.getDate()) + "/" + p2(nu.getMonth() + 1) + "/" + nu.getFullYear();
+      var groen = [15, 61, 62];
+
+      doc.setFont("helvetica", "bold"); doc.setFontSize(16); doc.setTextColor(groen[0], groen[1], groen[2]);
+      doc.text("Medicatieschema", 14, 18);
+      doc.setFont("helvetica", "normal"); doc.setFontSize(9.5); doc.setTextColor(80);
+      var c = sessie.context, ctx = [];
+      if (c.leeftijd != null) ctx.push("leeftijd " + c.leeftijd);
+      if (c.egfr != null) ctx.push("eGFR " + c.egfr);
+      if (c.kalium != null) ctx.push("K+ " + c.kalium);
+      doc.text(pdfTekst("Opgemaakt op " + datum + (ctx.length ? "   ·   Context: " + ctx.join(", ") : "")), 14, 24);
+      doc.text("Patiënt: ......................................................................", 14, 30);
+
+      var rijen = sessie.items.map(function (it) {
+        var s = it.schema;
+        return [
+          pdfTekst(it.product.naam + (it.sterkte ? " " + it.sterkte : "") + (it.aantalDoosjes > 1 ? " (" + it.aantalDoosjes + " doosjes)" : "")),
+          pdfTekst(it.product.stoffen.map(function (x) { return x.naam; }).join(" + ")),
+          fmtAantal(s.o), fmtAantal(s.m), fmtAantal(s.a), fmtAantal(s.s),
+          pdfTekst(opmerking(it))
+        ];
+      });
+      autoTable(doc, {
+        startY: 35,
+        head: [["Geneesmiddel", "Werkzame stof(fen)", "Ochtend", "Middag", "Avond", "Slapen", "Opmerking"]],
+        body: rijen,
+        theme: "grid",
+        styles: { fontSize: 8.5, cellPadding: 1.8, valign: "middle", lineColor: [210, 218, 216] },
+        headStyles: { fillColor: groen, textColor: 255, fontStyle: "bold", halign: "center", fontSize: 7.5 },
+        columnStyles: {
+          0: { cellWidth: 50, fontStyle: "bold" }, 1: { cellWidth: 36 },
+          2: { cellWidth: 16.5, halign: "center", fontSize: 11 }, 3: { cellWidth: 16.5, halign: "center", fontSize: 11 },
+          4: { cellWidth: 16.5, halign: "center", fontSize: 11 }, 5: { cellWidth: 16.5, halign: "center", fontSize: 11 },
+          6: { cellWidth: "auto" }
+        },
+        didParseCell: function (d) {
+          if (d.section === "body" && d.column.index >= 2 && d.column.index <= 5 && d.cell.raw === "0") d.cell.styles.textColor = [190, 198, 196];
+          if (d.section === "body" && sessie.items[d.row.index] && sessie.items[d.row.index].inname === "nee") d.cell.styles.fillColor = [242, 242, 242];
+        }
+      });
+
+      var y = doc.lastAutoTable.finalY + 8;
+      if (huidigeWaarschuwingen.length) {
+        doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.setTextColor(groen[0], groen[1], groen[2]);
+        doc.text("Aandachtspunten", 14, y);
+        autoTable(doc, {
+          startY: y + 3,
+          head: [["Ernst", "Aandachtspunt", "Advies"]],
+          body: huidigeWaarschuwingen.map(function (w) { return [w.ernst, pdfTekst(w.naam + ": " + w.tekst), pdfTekst(w.advies || "")]; }),
+          theme: "grid",
+          styles: { fontSize: 8.5, cellPadding: 1.8, lineColor: [210, 218, 216] },
+          headStyles: { fillColor: groen, textColor: 255 },
+          columnStyles: { 0: { cellWidth: 16, fontStyle: "bold" }, 1: { cellWidth: 100 } },
+          didParseCell: function (d) {
+            if (d.section !== "body") return;
+            var e = huidigeWaarschuwingen[d.row.index].ernst;
+            d.cell.styles.fillColor = e === "hoog" ? [253, 236, 234] : e === "matig" ? [254, 243, 230] : [234, 242, 251];
+          }
+        });
+      }
+
+      // Voettekst op elke pagina
+      var n = doc.getNumberOfPages();
+      for (var i = 1; i <= n; i++) {
+        doc.setPage(i);
+        doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(120);
+        var voet = "Medscan PoC (masterproef huisartsopleiding) - regels niet klinisch gevalideerd, geen medisch hulpmiddel. " +
+          (SAM ? "Geneesmiddelengegevens: SAMv2 (FAGG, BCFI, RIZIV, FOD Volksgezondheid, eHealth), export " + SAM.versie + "; geen officieel karakter." : "");
+        doc.text(doc.splitTextToSize(pdfTekst(voet), 182), 14, 287);
+        doc.text(i + "/" + n, 196, 293, { align: "right" });
+      }
+
+      var naam = "medicatieschema-" + nu.getFullYear() + p2(nu.getMonth() + 1) + p2(nu.getDate()) + ".pdf";
+      var blob = doc.output("blob");
+      bezig(false);
+      var bestand = null;
+      try { bestand = new File([blob], naam, { type: "application/pdf" }); } catch (e) { /* oude browser */ }
+      if (bestand && navigator.canShare && navigator.canShare({ files: [bestand] })) {
+        try { await navigator.share({ files: [bestand], title: "Medicatieschema" }); return; }
+        catch (e) { if (e && e.name === "AbortError") return; }
+      }
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a"); a.href = url; a.download = naam; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+      toast("PDF gemaakt");
+    } catch (e) {
+      bezig(false);
+      console.error(e);
+      await dialoog("PDF maken mislukt: " + esc(e.message), { geenAnnuleer: true });
+    }
   }
 
   async function sluitSessieAf() {
@@ -579,6 +712,7 @@
   };
   $("btn-afronden").onclick = openOverzicht;
   $("btn-ov-terug").onclick = function () { toon("s-scan"); };
+  $("btn-pdf").onclick = maakPdf;
   $("btn-afsluiten").onclick = sluitSessieAf;
   $("btn-kopieer").onclick = function () {
     var ta = $("ov-tekst");
@@ -604,5 +738,5 @@
   toon("s-start");
 
   // Voor automatische tests
-  window.__medscan = { verwerkCode: function (t) { verwerkCode(GS1.parse(t)); }, sessie: function () { return sessie; } };
+  window.__medscan = { verwerkCode: function (t) { verwerkCode(GS1.parse(t)); }, sessie: function () { return sessie; }, maakPdf: maakPdf };
 })();
